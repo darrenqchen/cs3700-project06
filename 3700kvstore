@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+
+import argparse
+import socket
+import time
+import json
+import select
+import struct
+import sys
+import math
+import os
+
+BROADCAST = "FFFF"
+
+
+class Replica:
+    def __init__(self, port, id, others):
+        self.port = port
+        self.id = id
+        self.others = others
+
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(('localhost', 0))
+
+        print("Replica %s starting up" % self.id, flush=True)
+        hello = {"src": self.id, "dst": BROADCAST,
+                 "leader": BROADCAST, "type": "hello"}
+        self.send(hello)
+        print("Sent hello message: %s" % hello, flush=True)
+
+    def send(self, message):
+        self.socket.sendto(json.dumps(message).encode(
+            'utf-8'), ('localhost', self.port))
+
+    def run(self):
+        while True:
+            data, addr = self.socket.recvfrom(65535)
+            msg = data.decode('utf-8')
+
+            print("Received message '%s'" % (msg,), flush=True)
+        # Project 3
+        # while True:
+        #     socks = select.select(self.sockets.values(), [], [], 0.1)[0]
+        #     for conn in socks:
+        #         # k is the json and addr is the tuple with our home router and port number
+        #         k, addr = conn.recvfrom(65535)
+        #         srcif = None
+        #         for sock in self.sockets:
+        #             if self.sockets[sock] == conn:
+        #                 srcif = sock
+        #                 break
+        #         msg = k.decode('utf-8')
+
+        #         print("Received message '%s' from %s" % (msg, srcif))
+
+        #         decoded_msg = json.loads(k)
+        #         msg_type = decoded_msg['type']
+        #         if msg_type == 'update':
+        #             self.update(decoded_msg)
+        #         elif msg_type == 'withdraw':
+        #             self.withdraw(decoded_msg)
+        #         elif msg_type == 'data':
+        #             self.data(decoded_msg, srcif)  # type: ignore
+        #         elif msg_type == 'dump':
+        #             self.dump(decoded_msg)
+
+        # The Project 4 one
+        # while True:
+        #     socks = select.select([self.socket], [], [])[0]
+        #     for conn in socks:
+        #         for i in range(4):
+        #             data, addr = conn.recvfrom(65535)
+
+        #             # Grab the remote host/port if we don't already have it
+        #             if self.remote_host is None:
+        #                 self.remote_host = addr[0]
+        #                 self.remote_port = addr[1]
+
+        #             self.log("Received data message %s" % data.decode('utf-8'))
+
+        #             if self.detect_mangled(data):
+        #                 continue
+
+        #             msg = json.loads(data.decode('utf-8'))
+        #             if msg['sequence'] in self.sequence_received:
+        #                 self.send({ "type": "ack", "sequence": msg['sequence'] })
+        #                 continue
+
+        #             self.sequence_received[msg['sequence']] = msg['data']
+        #             self.send({ "type": "ack", "sequence": msg['sequence'] })
+
+        #             if msg['sequence'] == self.sequence_count:
+        #                 self.sequence_count += 1
+
+        #                 # Print out the data to stdout
+        #                 print(msg['data'], end='', flush=True)
+
+        #             while self.sequence_count in self.sequence_received:
+        #                 # Print out the data to stdout
+        #                 print(self.sequence_received[self.sequence_count], end='', flush=True)
+        #                 self.sequence_count += 1
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='run a key-value store')
+    parser.add_argument('port', type=int, help="Port number to communicate")
+    parser.add_argument('id', type=str, help="ID of this replica")
+    parser.add_argument('others', metavar='others', type=str,
+                        nargs='+', help="IDs of other replicas")
+    args = parser.parse_args()
+    replica = Replica(args.port, args.id, args.others)
+    replica.run()
