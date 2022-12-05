@@ -28,16 +28,67 @@ class Replica:
         self.send(hello)
         print("Sent hello message: %s" % hello, flush=True)
 
+        # my spot
+        self.leader: str = BROADCAST
+        # TODO GET RID OF THIS LATER WHEN YOU DO LEADER SELECTION
+        self.leader = "0000"
+        self.log: dict = dict()
+        self.queue: dict = dict()
+        self.term = 1
+
+    # returns the message for the get
+    def getReq(self, message) -> dict:
+        key = message["key"]
+        value = message.get(key, "")
+        ok = {"src": message["dst"],
+              "dst": message["src"],
+              "leader": message["leader"],
+              "type": "ok",
+              "MID": message["MID"],
+              "value": value}
+        # return ok
+        return {"src": message["dst"], "dst": message["src"], "leader": message["leader"],
+                "type": "fail", "MID": message["MID"]}
+
+    #! MID might not be in the dictionary
+    # returns the message for the get
+    def putReq(self, message) -> dict:
+        self.log[message["key"]] = message["value"]
+        ok = {"src": message["dst"],
+              "dst": message["src"],
+              "leader": message["leader"],
+              "type": "ok",
+              "MID": message["MID"]}
+        # return ok
+        return {"src": message["dst"], "dst": message["src"], "leader": message["leader"],
+                "type": "fail", "MID": message["MID"]}
+
+    # returns the message for the redirect
+    def redirectReq(self, message) -> dict:
+        pass
+
     def send(self, message):
         self.socket.sendto(json.dumps(message).encode(
-            'utf-8'), ('localhost', self.port))
+            'utf-8'), ('localhost', self.port))  # sent as bytes
 
     def run(self):
         while True:
             data, addr = self.socket.recvfrom(65535)
-            msg = data.decode('utf-8')
+            msg: str = data.decode('utf-8')
+            message: dict = json.loads(msg)
 
             print("Received message '%s'" % (msg,), flush=True)
+            message_type = message["type"]
+            #! if "fail" retry
+            if message_type == "get":
+                ret = self.getReq(message)
+                self.send(ret)
+            elif message_type == "put":
+                ret = self.putReq(message)
+                self.send(ret)
+            elif message_type == "redirect":
+                self.redirectReq(message)
+
         # Project 3
         # while True:
         #     socks = select.select(self.sockets.values(), [], [], 0.1)[0]
