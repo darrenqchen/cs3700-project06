@@ -39,16 +39,14 @@ class Replica:
     # returns the message for the get
     def getReq(self, message) -> dict:
         key = message["key"]
-        value = message.get(key, "")
+        value = self.log.get(key, "")
         ok = {"src": message["dst"],
               "dst": message["src"],
-              "leader": message["leader"],
+              "leader": self.leader,
               "type": "ok",
               "MID": message["MID"],
               "value": value}
-        # return ok
-        return {"src": message["dst"], "dst": message["src"], "leader": message["leader"],
-                "type": "fail", "MID": message["MID"]}
+        return ok
 
     #! MID might not be in the dictionary
     # returns the message for the get
@@ -56,18 +54,18 @@ class Replica:
         self.log[message["key"]] = message["value"]
         ok = {"src": message["dst"],
               "dst": message["src"],
-              "leader": message["leader"],
+              "leader": self.leader,
               "type": "ok",
               "MID": message["MID"]}
-        # return ok
-        return {"src": message["dst"], "dst": message["src"], "leader": message["leader"],
-                "type": "fail", "MID": message["MID"]}
-
-    # returns the message for the redirect
-    def redirectReq(self, message) -> dict:
-        pass
+        
+        # updates all replicas
+        #! remove this after the milestone
+        self.send({"src": message["dst"], "dst": "FFFF", "leader": self.leader,
+                           "type": "fail", "MID": message["MID"]})
+        return ok
 
     def send(self, message):
+        print("Sending message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode(
             'utf-8'), ('localhost', self.port))  # sent as bytes
 
@@ -77,17 +75,23 @@ class Replica:
             msg: str = data.decode('utf-8')
             message: dict = json.loads(msg)
 
-            print("Received message '%s'" % (msg,), flush=True)
+            # print("Received message '%s'" % (msg,), flush=True)
+            print("Received '%s'" % (
+                str([message["src"], message["dst"], message["leader"], message["type"],
+                    message.get("key", ""), message.get("value", ""), message["MID"]]),
+            ), flush=True)
             message_type = message["type"]
             #! if "fail" retry
-            if message_type == "get":
+            # TODO Add type for "getvotes", and "appendentry"
+            if (message_type == "get" or message_type == "put") and self.id != self.leader:
+                self.send({"src": message["dst"], "dst": message["src"], "leader": self.leader,
+                           "type": "redirect", "MID": message["MID"]})
+            elif message_type == "get":
                 ret = self.getReq(message)
                 self.send(ret)
             elif message_type == "put":
                 ret = self.putReq(message)
                 self.send(ret)
-            elif message_type == "redirect":
-                self.redirectReq(message)
 
         # Project 3
         # while True:
