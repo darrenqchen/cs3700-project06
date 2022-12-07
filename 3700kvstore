@@ -11,6 +11,11 @@ import math
 import os
 
 BROADCAST = "FFFF"
+LEADER = "leader"
+CANDIDATE = "candidate"
+FOLLOWER = "follower"
+APPEND_ENTRIES = "appendEntries"
+REQUEST_VOTES = "requestVotes"
 
 
 class Replica:
@@ -29,12 +34,39 @@ class Replica:
         print("Sent hello message: %s" % hello, flush=True)
 
         # my spot
+        self.state = FOLLOWER
         self.leader: str = BROADCAST
-        # TODO GET RID OF THIS LATER WHEN YOU DO LEADER SELECTION
-        self.leader = "0000"
-        self.log: dict = dict()
+        self.term = 0
+        self.log: dict = dict()  # key value
         self.queue: dict = dict()
-        self.term = 1
+        self.votes = 1
+        self.voted_terms: list = list()  # what term did it vote for already
+
+        # TODO GET RID OF THIS LATER WHEN YOU DO LEADER SELECTION
+        # self.leader = "0000"
+        # if self.id == "0000":
+        #     self.state = "leader"
+        if self.id == "0000":
+            print("before request")
+            time.sleep(1)
+            self.requestVote()
+            print("after request")
+
+    # does the election process
+    # TODO make sure the replicas reply with ok and if it already did something, reply with no
+    def requestVote(self):
+        self.state = CANDIDATE
+    
+        self.term += 1
+        # TODO reset election timer
+        req = {"src": self.id,
+               "dst": "FFFF",
+               "leader": self.leader,
+               "type": REQUEST_VOTES,
+               "term": self.term}
+        self.votes = 1
+        self.send(req)
+        return
 
     # returns the message for the get
     def getReq(self, message) -> dict:
@@ -57,103 +89,80 @@ class Replica:
               "leader": self.leader,
               "type": "ok",
               "MID": message["MID"]}
-        
+
         # updates all replicas
         #! remove this after the milestone
         self.send({"src": message["dst"], "dst": "FFFF", "leader": self.leader,
-                           "type": "fail", "MID": message["MID"]})
+                   "type": "fail", "MID": message["MID"]})
         return ok
 
     def send(self, message):
-        print("Sending message '%s'" % (message,), flush=True)
+        if message["type"] != "hello":
+            print("Sending message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode(
             'utf-8'), ('localhost', self.port))  # sent as bytes
 
+    # commands:
     def run(self):
         while True:
             data, addr = self.socket.recvfrom(65535)
             msg: str = data.decode('utf-8')
             message: dict = json.loads(msg)
 
-            # print("Received message '%s'" % (msg,), flush=True)
-            print("Received '%s'" % (
-                str([message["src"], message["dst"], message["leader"], message["type"],
-                    message.get("key", ""), message.get("value", ""), message["MID"]]),
-            ), flush=True)
+            print("Received message '%s'" % (msg,), flush=True)
+            # prints
+            # print("Received '%s'" % (
+            #     str([message["src"], message["dst"], message["leader"], message["type"],
+            #         message.get("key", ""), message.get("value", ""), message["MID"]]),
+            # ), flush=True)
             message_type = message["type"]
-            #! if "fail" retry
-            # TODO Add type for "getvotes", and "appendentry"
-            if (message_type == "get" or message_type == "put") and self.id != self.leader:
+
+            # TODO heartbeat if leader
+
+            # votes
+            if message_type == REQUEST_VOTES and self.state == FOLLOWER:
+                response = {"src": self.id,
+                            "dst": message["src"],
+                            "leader": self.leader}
+                if not message["term"] in self.voted_terms:
+                    response["type"] = "yesVote"
+                    self.voted_terms.append(message["term"])
+                else:
+                    response["type"] = "noVote"
+                self.send(response)
+            # candidate
+            elif message_type == "yesVote" and self.state == CANDIDATE:
+                self.votes += 1
+                if self.votes >= 3 and self.state != LEADER:
+                    self.state = LEADER
+                    self.leader = self.id
+                    leader = {"src": self.id,
+                              "dst": "FFFF",
+                              "leader": self.leader,
+                              "type": APPEND_ENTRIES,
+                              "term": self.term,
+                              "log": self.log}
+                    self.send(leader)
+                    break
+                    # TODO get a response to the leader announcement where it takes in new logs?
+
+            # commands
+            # TODO Add type for "getVote", and "appendEntries"
+            elif (message_type == "get" or message_type == "put") and self.state != LEADER:
                 self.send({"src": message["dst"], "dst": message["src"], "leader": self.leader,
                            "type": "redirect", "MID": message["MID"]})
-            elif message_type == "get":
+            elif message_type == "get" and self.state == LEADER:
                 ret = self.getReq(message)
                 self.send(ret)
-            elif message_type == "put":
+            elif message_type == "put" and self.state == LEADER:
                 ret = self.putReq(message)
                 self.send(ret)
-
-        # Project 3
-        # while True:
-        #     socks = select.select(self.sockets.values(), [], [], 0.1)[0]
-        #     for conn in socks:
-        #         # k is the json and addr is the tuple with our home router and port number
-        #         k, addr = conn.recvfrom(65535)
-        #         srcif = None
-        #         for sock in self.sockets:
-        #             if self.sockets[sock] == conn:
-        #                 srcif = sock
-        #                 break
-        #         msg = k.decode('utf-8')
-
-        #         print("Received message '%s' from %s" % (msg, srcif))
-
-        #         decoded_msg = json.loads(k)
-        #         msg_type = decoded_msg['type']
-        #         if msg_type == 'update':
-        #             self.update(decoded_msg)
-        #         elif msg_type == 'withdraw':
-        #             self.withdraw(decoded_msg)
-        #         elif msg_type == 'data':
-        #             self.data(decoded_msg, srcif)  # type: ignore
-        #         elif msg_type == 'dump':
-        #             self.dump(decoded_msg)
-
-        # The Project 4 one
-        # while True:
-        #     socks = select.select([self.socket], [], [])[0]
-        #     for conn in socks:
-        #         for i in range(4):
-        #             data, addr = conn.recvfrom(65535)
-
-        #             # Grab the remote host/port if we don't already have it
-        #             if self.remote_host is None:
-        #                 self.remote_host = addr[0]
-        #                 self.remote_port = addr[1]
-
-        #             self.log("Received data message %s" % data.decode('utf-8'))
-
-        #             if self.detect_mangled(data):
-        #                 continue
-
-        #             msg = json.loads(data.decode('utf-8'))
-        #             if msg['sequence'] in self.sequence_received:
-        #                 self.send({ "type": "ack", "sequence": msg['sequence'] })
-        #                 continue
-
-        #             self.sequence_received[msg['sequence']] = msg['data']
-        #             self.send({ "type": "ack", "sequence": msg['sequence'] })
-
-        #             if msg['sequence'] == self.sequence_count:
-        #                 self.sequence_count += 1
-
-        #                 # Print out the data to stdout
-        #                 print(msg['data'], end='', flush=True)
-
-        #             while self.sequence_count in self.sequence_received:
-        #                 # Print out the data to stdout
-        #                 print(self.sequence_received[self.sequence_count], end='', flush=True)
-        #                 self.sequence_count += 1
+            elif message_type == APPEND_ENTRIES:
+                if message["term"] >= self.term:
+                    self.term = message["term"]
+                    self.state = FOLLOWER
+                    self.leader = message["leader"]
+                    # TODO do log stuff
 
 
 if __name__ == "__main__":
