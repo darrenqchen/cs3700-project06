@@ -15,7 +15,7 @@ LEADER = "leader"
 CANDIDATE = "candidate"
 FOLLOWER = "follower"
 APPEND_ENTRIES = "appendEntries"
-REQUEST_VOTES = "requestVotes"
+REQUEST_VOTES = "request_votes"
 
 
 class Replica:
@@ -40,23 +40,22 @@ class Replica:
         self.log: dict = dict()  # key value
         self.queue: dict = dict()
         self.votes = 1
-        self.voted_terms: list = list()  # what term did it vote for already
+        self.voted_terms: set = set()  # what term did it vote for already
+        self.timer = time.time()
 
         # TODO GET RID OF THIS LATER WHEN YOU DO LEADER SELECTION
         # self.leader = "0000"
         # if self.id == "0000":
         #     self.state = "leader"
         if self.id == "0000":
-            print("before request")
             time.sleep(1)
-            self.requestVote()
-            print("after request")
+            self.request_vote()
 
     # does the election process
     # TODO make sure the replicas reply with ok and if it already did something, reply with no
-    def requestVote(self):
+    def request_vote(self):
         self.state = CANDIDATE
-    
+
         self.term += 1
         # TODO reset election timer
         req = {"src": self.id,
@@ -65,11 +64,42 @@ class Replica:
                "type": REQUEST_VOTES,
                "term": self.term}
         self.votes = 1
+        self.voted_terms.add(self.term)
         self.send(req)
         return
 
+    def vote(self, message):
+        message_type = message["type"]
+        if message_type == REQUEST_VOTES and self.state == FOLLOWER:
+            response = {"src": self.id,
+                        "dst": message["src"],
+                        "leader": self.leader,
+                        "type": ""}
+            if not message["term"] in self.voted_terms:
+                response["type"] = "yesVote"
+                self.voted_terms.add(message["term"])
+            else:
+                response["type"] = "noVote"
+            self.send(response)
+
+    def candidate_yes_vote(self, message):
+        message_type = message["type"]
+        if message_type == "yesVote" and self.state == CANDIDATE:
+            self.votes += 1
+            if self.votes >= 3 and self.state != LEADER:
+                self.state = LEADER
+                self.leader = self.id
+                leader = {"src": self.id,
+                          "dst": "FFFF",
+                          "leader": self.leader,
+                          "type": APPEND_ENTRIES,
+                          "term": self.term,
+                          "log": self.log}
+                self.send(leader)
+                # TODO get a response to the leader announcement where it takes in new logs?
+
     # returns the message for the get
-    def getReq(self, message) -> dict:
+    def get_req(self, message) -> dict:
         key = message["key"]
         value = self.log.get(key, "")
         ok = {"src": message["dst"],
@@ -82,7 +112,7 @@ class Replica:
 
     #! MID might not be in the dictionary
     # returns the message for the get
-    def putReq(self, message) -> dict:
+    def put_req(self, message) -> dict:
         self.log[message["key"]] = message["value"]
         ok = {"src": message["dst"],
               "dst": message["src"],
@@ -120,42 +150,20 @@ class Replica:
             # TODO heartbeat if leader
 
             # votes
-            if message_type == REQUEST_VOTES and self.state == FOLLOWER:
-                response = {"src": self.id,
-                            "dst": message["src"],
-                            "leader": self.leader}
-                if not message["term"] in self.voted_terms:
-                    response["type"] = "yesVote"
-                    self.voted_terms.append(message["term"])
-                else:
-                    response["type"] = "noVote"
-                self.send(response)
+            self.vote(message)
             # candidate
-            elif message_type == "yesVote" and self.state == CANDIDATE:
-                self.votes += 1
-                if self.votes >= 3 and self.state != LEADER:
-                    self.state = LEADER
-                    self.leader = self.id
-                    leader = {"src": self.id,
-                              "dst": "FFFF",
-                              "leader": self.leader,
-                              "type": APPEND_ENTRIES,
-                              "term": self.term,
-                              "log": self.log}
-                    self.send(leader)
-                    break
-                    # TODO get a response to the leader announcement where it takes in new logs?
+            self.candidate_yes_vote(message)
 
             # commands
             # TODO Add type for "getVote", and "appendEntries"
-            elif (message_type == "get" or message_type == "put") and self.state != LEADER:
+            if (message_type == "get" or message_type == "put") and self.state != LEADER:
                 self.send({"src": message["dst"], "dst": message["src"], "leader": self.leader,
                            "type": "redirect", "MID": message["MID"]})
             elif message_type == "get" and self.state == LEADER:
-                ret = self.getReq(message)
+                ret = self.get_req(message)
                 self.send(ret)
             elif message_type == "put" and self.state == LEADER:
-                ret = self.putReq(message)
+                ret = self.put_req(message)
                 self.send(ret)
             elif message_type == APPEND_ENTRIES:
                 if message["term"] >= self.term:
@@ -174,3 +182,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     replica = Replica(args.port, args.id, args.others)
     replica.run()
+
+
+# leader: 0 1 2 3
+# replica 0 1 2 3
