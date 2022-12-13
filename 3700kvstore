@@ -121,14 +121,14 @@ class Replica:
               "MID": message["MID"]}
 
         # updates all replicas
-        #! remove this after the milestone
+        # #! remove this after the milestone
         self.send({"src": message["dst"], "dst": "FFFF", "leader": self.leader,
-                   "type": "fail", "MID": message["MID"]})
+                   "type": "append", "MID": message["MID"]})
         return ok
 
     def send(self, message):
         if message["type"] != "hello":
-            print("Sending message '%s'" % (message,), flush=True)
+            # print("Sending message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode(
             'utf-8'), ('localhost', self.port))  # sent as bytes
 
@@ -139,7 +139,7 @@ class Replica:
             msg: str = data.decode('utf-8')
             message: dict = json.loads(msg)
 
-            print("Received message '%s'" % (msg,), flush=True)
+            # print("Received message '%s'" % (msg,), flush=True)
             # prints
             # print("Received '%s'" % (
             #     str([message["src"], message["dst"], message["leader"], message["type"],
