@@ -127,8 +127,8 @@ class Replica:
         return ok
 
     def send(self, message):
-        if message["type"] != "hello":
-            # print("Sending message '%s'" % (message,), flush=True)
+        # if message["type"] != "hello":
+        #     print("Sending message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode(
             'utf-8'), ('localhost', self.port))  # sent as bytes
 
