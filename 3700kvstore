@@ -52,11 +52,9 @@ class Replica:
     # does the election process
     # TODO make sure the replicas reply with ok and if it already did something, reply with no
     def request_vote(self):
-        # print("SWITCHING TO CANDIDATE")
         self.state = CANDIDATE
 
         self.term += 1
-        # TODO reset election timer
         req = {"src": self.id,
                "dst": BROADCAST,
                "leader": self.leader,
@@ -65,6 +63,7 @@ class Replica:
         self.votes = 1
         self.voted_terms.add(self.term)
         self.send(req)
+        self.clock = time.time()
         return
 
     def vote(self, message):
@@ -133,22 +132,15 @@ class Replica:
         return ok
 
     def send(self, message):
-        if message["type"] != "hello":
-            print("Sending message '%s'" % (message,), flush=True)
-        # if message["type"] != "hello":
-        #     print("Sending message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode(
             'utf-8'), ('localhost', self.port))  # sent as bytes
 
     # commands:
     def run(self):
         while True:
-            #     print(self.state)
-
             current_time = time.time()
             time_difference = current_time - self.clock
-            timeout = random.uniform(.15, .3)
-            print([current_time, self.clock, time_difference, timeout])
+            timeout = random.uniform(.15, .3)gi
 
             # if time_difference >= timeout and self.state != LEADER:
             #     self.request_vote()
@@ -158,13 +150,6 @@ class Replica:
             message: dict = json.loads(msg)
 
             print("Received message '%s'" % (msg,), flush=True)
-            # print("Received message '%s'" % (msg,), flush=True)
-            # break
-
-            # print("Received '%s'" % (
-            #     str([message["src"], message["dst"], message["leader"], message["type"],
-            #         message.get("key", ""), message.get("value", ""), message.get("MID", "")]),
-            # ), flush=True)
             message_type = message["type"]
 
             # votes
@@ -173,7 +158,6 @@ class Replica:
             self.candidate_yes_vote(message)
 
             # commands
-            # TODO Add type for "getVote", and "appendEntries"
             if (message_type == "get" or message_type == "put") and self.state != LEADER:
                 self.send({"src": message["dst"], "dst": message["src"], "leader": self.leader,
                            "type": "redirect", "MID": message["MID"]})
@@ -192,10 +176,13 @@ class Replica:
                     self.leader = message["leader"]
                     self.log = message["log"]
                 self.clock = time.time()
+            elif message_type == "heartbeat":
+                self.clock = time.time()
             else:
                 heartbeat_time = .1
                 if self.state == LEADER and current_time - self.clock >= heartbeat_time:
                     self.heartbeat()
+                self.clock = time.time()
 
 
 if __name__ == "__main__":
