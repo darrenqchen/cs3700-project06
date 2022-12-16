@@ -42,7 +42,7 @@ class Replica:
         self.queue: dict = dict()
         self.votes = 1
         self.voted_terms: set = set()  # what term did it vote for already
-        self.clock = round(time.time(), 3)
+        self.clock = time.time()
 
         # elects replica 0 as the leader
         if self.id == "0000":
@@ -81,7 +81,7 @@ class Replica:
                 response["type"] = "noVote"
             self.send(response)
 
-        self.clock = round(time.time(), 3)
+            self.clock = time.time()
 
     def candidate_yes_vote(self, message):
         message_type = message["type"]
@@ -97,9 +97,8 @@ class Replica:
                           "term": self.term,
                           "log": self.log}
                 self.send(leader)
-                # TODO get a response to the leader announcement where it takes in new logs?
 
-        self.clock = round(time.time(), 3)
+            self.clock = time.time()
 
     def heartbeat(self):
         heartbeat_msg = {"src": self.id,
@@ -118,11 +117,7 @@ class Replica:
               "type": "ok",
               "MID": message["MID"],
               "value": value}
-        self.clock = round(time.time(), 3)
         return ok
-
-    #! MID might not be in the dictionary
-    # returns the message for the get
 
     def put_req(self, message) -> dict:
         self.log[message["key"]] = message["value"]
@@ -135,10 +130,11 @@ class Replica:
         # updates all replicas
         self.send({"src": message["dst"], "dst": BROADCAST, "leader": self.leader,
                    "type": APPEND_ENTRIES, "term": self.term, "log": self.log})
-        self.clock = round(time.time(), 3)
         return ok
 
     def send(self, message):
+        if message["type"] != "hello":
+            print("Sending message '%s'" % (message,), flush=True)
         # if message["type"] != "hello":
         #     print("Sending message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode(
@@ -149,33 +145,27 @@ class Replica:
         while True:
             #     print(self.state)
 
-            current_time = round(time.time(), 3)
+            current_time = time.time()
             time_difference = current_time - self.clock
-            timeout = round(random.uniform(.15, .3), 3)
+            timeout = random.uniform(.15, .3)
+            print([current_time, self.clock, time_difference, timeout])
 
-            # print(f"Current time: {current_time} Clock time: {self.clock} Difference: {time_difference} Random: {timeout} Over?: {current_time - self.clock > timeout}")
-
-            if time_difference > timeout:
-                self.request_vote()
+            # if time_difference >= timeout and self.state != LEADER:
+            #     self.request_vote()
 
             data, addr = self.socket.recvfrom(65535)
             msg: str = data.decode('utf-8')
             message: dict = json.loads(msg)
 
+            print("Received message '%s'" % (msg,), flush=True)
             # print("Received message '%s'" % (msg,), flush=True)
             # break
 
-            # prints
             # print("Received '%s'" % (
             #     str([message["src"], message["dst"], message["leader"], message["type"],
             #         message.get("key", ""), message.get("value", ""), message.get("MID", "")]),
             # ), flush=True)
             message_type = message["type"]
-
-            # TODO heartbeat if leader
-            heartbeat_time = .1
-            if current_time - self.clock >= heartbeat_time:
-                self.heartbeat()
 
             # votes
             self.vote(message)
@@ -187,23 +177,25 @@ class Replica:
             if (message_type == "get" or message_type == "put") and self.state != LEADER:
                 self.send({"src": message["dst"], "dst": message["src"], "leader": self.leader,
                            "type": "redirect", "MID": message["MID"]})
-                self.clock = round(time.time(), 3)
             elif message_type == "get" and self.state == LEADER:
                 ret = self.get_req(message)
                 self.send(ret)
-                self.clock = round(time.time(), 3)
+                self.clock = time.time()
             elif message_type == "put" and self.state == LEADER:
                 ret = self.put_req(message)
                 self.send(ret)
-                self.clock = round(time.time(), 3)
+                self.clock = time.time()
             elif message_type == APPEND_ENTRIES:
                 if message["term"] >= self.term:
                     self.term = message["term"]
                     self.state = FOLLOWER
                     self.leader = message["leader"]
-                    # TODO do log stuff
                     self.log = message["log"]
-                    self.clock = round(time.time(), 3)
+                self.clock = time.time()
+            else:
+                heartbeat_time = .1
+                if self.state == LEADER and current_time - self.clock >= heartbeat_time:
+                    self.heartbeat()
 
 
 if __name__ == "__main__":
