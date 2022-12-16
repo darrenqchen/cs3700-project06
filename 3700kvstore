@@ -42,7 +42,7 @@ class Replica:
         self.queue: dict = dict()
         self.votes = 1
         self.voted_terms: set = set()  # what term did it vote for already
-        self.clock = time.time()
+        self.clock = round(time.time(), 3)
 
         # elects replica 0 as the leader
         if self.id == "0000":
@@ -55,6 +55,7 @@ class Replica:
         self.state = CANDIDATE
 
         self.term += 1
+        # TODO reset election timer
         req = {"src": self.id,
                "dst": BROADCAST,
                "leader": self.leader,
@@ -79,7 +80,6 @@ class Replica:
             else:
                 response["type"] = "noVote"
             self.send(response)
-
             self.clock = time.time()
 
     def candidate_yes_vote(self, message):
@@ -96,7 +96,6 @@ class Replica:
                           "term": self.term,
                           "log": self.log}
                 self.send(leader)
-
             self.clock = time.time()
 
     def heartbeat(self):
@@ -116,7 +115,11 @@ class Replica:
               "type": "ok",
               "MID": message["MID"],
               "value": value}
+        self.clock = round(time.time(), 3)
         return ok
+
+    #! MID might not be in the dictionary
+    # returns the message for the get
 
     def put_req(self, message) -> dict:
         self.log[message["key"]] = message["value"]
@@ -129,28 +132,37 @@ class Replica:
         # updates all replicas
         self.send({"src": message["dst"], "dst": BROADCAST, "leader": self.leader,
                    "type": APPEND_ENTRIES, "term": self.term, "log": self.log})
+        self.clock = round(time.time(), 3)
         return ok
 
     def send(self, message):
+        # print("Sending message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode(
             'utf-8'), ('localhost', self.port))  # sent as bytes
 
     # commands:
     def run(self):
         while True:
-            current_time = time.time()
-            time_difference = current_time - self.clock
-            timeout = random.uniform(.15, .3)gi
+            #     print(self.state)
 
-            # if time_difference >= timeout and self.state != LEADER:
+            current_time = round(time.time(), 3)
+            time_difference = current_time - self.clock
+            timeout = round(random.uniform(.15, .3), 3)
+
+            # if time_difference > timeout:
             #     self.request_vote()
 
             data, addr = self.socket.recvfrom(65535)
             msg: str = data.decode('utf-8')
             message: dict = json.loads(msg)
 
-            print("Received message '%s'" % (msg,), flush=True)
+            # print("Received message '%s'" % (msg,), flush=True)
             message_type = message["type"]
+
+            # TODO heartbeat if leader
+            heartbeat_time = .1
+            if current_time - self.clock >= heartbeat_time:
+                self.heartbeat()
 
             # votes
             self.vote(message)
@@ -158,9 +170,11 @@ class Replica:
             self.candidate_yes_vote(message)
 
             # commands
+            # TODO Add type for "getVote", and "appendEntries"
             if (message_type == "get" or message_type == "put") and self.state != LEADER:
                 self.send({"src": message["dst"], "dst": message["src"], "leader": self.leader,
                            "type": "redirect", "MID": message["MID"]})
+                self.clock = time.time()
             elif message_type == "get" and self.state == LEADER:
                 ret = self.get_req(message)
                 self.send(ret)
@@ -175,9 +189,7 @@ class Replica:
                     self.state = FOLLOWER
                     self.leader = message["leader"]
                     self.log = message["log"]
-                self.clock = time.time()
-            elif message_type == "heartbeat":
-                self.clock = time.time()
+                    self.clock = time.time()
             else:
                 heartbeat_time = .1
                 if self.state == LEADER and current_time - self.clock >= heartbeat_time:
