@@ -52,7 +52,7 @@ class Replica:
     # does the election process
     # TODO make sure the replicas reply with ok and if it already did something, reply with no
     def request_vote(self):
-        print("SWITCHING TO CANDIDATE")
+        # print("SWITCHING TO CANDIDATE")
         self.state = CANDIDATE
 
         self.term += 1
@@ -139,8 +139,8 @@ class Replica:
         return ok
 
     def send(self, message):
-        if message["type"] != "hello":
-            print("Sending message '%s'" % (message,), flush=True)
+        # if message["type"] != "hello":
+        #     print("Sending message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode(
             'utf-8'), ('localhost', self.port))  # sent as bytes
 
@@ -162,7 +162,7 @@ class Replica:
             msg: str = data.decode('utf-8')
             message: dict = json.loads(msg)
 
-            print("Received message '%s'" % (msg,), flush=True)
+            # print("Received message '%s'" % (msg,), flush=True)
             # break
 
             # prints
