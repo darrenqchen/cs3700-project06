@@ -9,6 +9,7 @@ import struct
 import sys
 import math
 import os
+import random
 
 BROADCAST = "FFFF"
 LEADER = "leader"
@@ -41,12 +42,9 @@ class Replica:
         self.queue: dict = dict()
         self.votes = 1
         self.voted_terms: set = set()  # what term did it vote for already
-        self.timer = time.time()
+        self.clock = round(time.time(), 3)
 
-        # TODO GET RID OF THIS LATER WHEN YOU DO LEADER SELECTION
-        # self.leader = "0000"
-        # if self.id == "0000":
-        #     self.state = "leader"
+        # elects replica 0 as the leader
         if self.id == "0000":
             time.sleep(1)
             self.request_vote()
@@ -54,12 +52,13 @@ class Replica:
     # does the election process
     # TODO make sure the replicas reply with ok and if it already did something, reply with no
     def request_vote(self):
+        print("SWITCHING TO CANDIDATE")
         self.state = CANDIDATE
 
         self.term += 1
         # TODO reset election timer
         req = {"src": self.id,
-               "dst": "FFFF",
+               "dst": BROADCAST,
                "leader": self.leader,
                "type": REQUEST_VOTES,
                "term": self.term}
@@ -82,6 +81,8 @@ class Replica:
                 response["type"] = "noVote"
             self.send(response)
 
+        self.clock = round(time.time(), 3)
+
     def candidate_yes_vote(self, message):
         message_type = message["type"]
         if message_type == "yesVote" and self.state == CANDIDATE:
@@ -90,13 +91,22 @@ class Replica:
                 self.state = LEADER
                 self.leader = self.id
                 leader = {"src": self.id,
-                          "dst": "FFFF",
+                          "dst": BROADCAST,
                           "leader": self.leader,
                           "type": APPEND_ENTRIES,
                           "term": self.term,
                           "log": self.log}
                 self.send(leader)
                 # TODO get a response to the leader announcement where it takes in new logs?
+
+        self.clock = round(time.time(), 3)
+
+    def heartbeat(self):
+        heartbeat_msg = {"src": self.id,
+                         "dst": BROADCAST,
+                         "leader": self.leader,
+                         "type": "heartbeat"}
+        self.send(heartbeat_msg)
 
     # returns the message for the get
     def get_req(self, message) -> dict:
@@ -108,10 +118,12 @@ class Replica:
               "type": "ok",
               "MID": message["MID"],
               "value": value}
+        self.clock = round(time.time(), 3)
         return ok
 
     #! MID might not be in the dictionary
     # returns the message for the get
+
     def put_req(self, message) -> dict:
         self.log[message["key"]] = message["value"]
         ok = {"src": message["dst"],
@@ -121,33 +133,49 @@ class Replica:
               "MID": message["MID"]}
 
         # updates all replicas
-        # #! remove this after the milestone
-        self.send({"src": message["dst"], "dst": "FFFF", "leader": self.leader,
-                   "type": "append", "MID": message["MID"]})
+        self.send({"src": message["dst"], "dst": BROADCAST, "leader": self.leader,
+                   "type": APPEND_ENTRIES, "term": self.term, "log": self.log})
+        self.clock = round(time.time(), 3)
         return ok
 
     def send(self, message):
-        # if message["type"] != "hello":
-        #     print("Sending message '%s'" % (message,), flush=True)
+        if message["type"] != "hello":
+            print("Sending message '%s'" % (message,), flush=True)
         self.socket.sendto(json.dumps(message).encode(
             'utf-8'), ('localhost', self.port))  # sent as bytes
 
     # commands:
     def run(self):
         while True:
+            #     print(self.state)
+
+            current_time = round(time.time(), 3)
+            time_difference = current_time - self.clock
+            timeout = round(random.uniform(.15, .3), 3)
+
+            # print(f"Current time: {current_time} Clock time: {self.clock} Difference: {time_difference} Random: {timeout} Over?: {current_time - self.clock > timeout}")
+
+            if time_difference > timeout:
+                self.request_vote()
+
             data, addr = self.socket.recvfrom(65535)
             msg: str = data.decode('utf-8')
             message: dict = json.loads(msg)
 
-            # print("Received message '%s'" % (msg,), flush=True)
+            print("Received message '%s'" % (msg,), flush=True)
+            # break
+
             # prints
             # print("Received '%s'" % (
             #     str([message["src"], message["dst"], message["leader"], message["type"],
-            #         message.get("key", ""), message.get("value", ""), message["MID"]]),
+            #         message.get("key", ""), message.get("value", ""), message.get("MID", "")]),
             # ), flush=True)
             message_type = message["type"]
 
             # TODO heartbeat if leader
+            heartbeat_time = .1
+            if current_time - self.clock >= heartbeat_time:
+                self.heartbeat()
 
             # votes
             self.vote(message)
@@ -159,18 +187,23 @@ class Replica:
             if (message_type == "get" or message_type == "put") and self.state != LEADER:
                 self.send({"src": message["dst"], "dst": message["src"], "leader": self.leader,
                            "type": "redirect", "MID": message["MID"]})
+                self.clock = round(time.time(), 3)
             elif message_type == "get" and self.state == LEADER:
                 ret = self.get_req(message)
                 self.send(ret)
+                self.clock = round(time.time(), 3)
             elif message_type == "put" and self.state == LEADER:
                 ret = self.put_req(message)
                 self.send(ret)
+                self.clock = round(time.time(), 3)
             elif message_type == APPEND_ENTRIES:
                 if message["term"] >= self.term:
                     self.term = message["term"]
                     self.state = FOLLOWER
                     self.leader = message["leader"]
                     # TODO do log stuff
+                    self.log = message["log"]
+                    self.clock = round(time.time(), 3)
 
 
 if __name__ == "__main__":
@@ -182,7 +215,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     replica = Replica(args.port, args.id, args.others)
     replica.run()
-
-
-# leader: 0 1 2 3
-# replica 0 1 2 3
